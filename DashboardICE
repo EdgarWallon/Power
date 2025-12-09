@@ -13,31 +13,44 @@ from dash.dependencies import Input, Output
 
 
 # ======================================================
-# 1) URLs ICE
+# 1) PARAMÈTRES CSS
 # ======================================================
-URL_EUA = "https://www.ice.com/marketdata/DelayedMarkets.shtml?getIntradayChartDataAsJson=&marketId=5474739"
-URL_TTF = "https://www.ice.com/marketdata/DelayedMarkets.shtml?getIntradayChartDataAsJson=&marketId=6089679"
+EFFICIENCY = 0.59        # rendement (η)
+EMISSION_FACTOR = 0.18   # tCO2 / MWh
 
-URL_EUA_3M = "https://www.ice.com/marketdata/DelayedMarkets.shtml?getHistoricalChartDataAsJson=&marketId=5474739&historicalSpan=1"
-URL_TTF_3M = "https://www.ice.com/marketdata/DelayedMarkets.shtml?getHistoricalChartDataAsJson=&marketId=6089679&historicalSpan=1"
 
-URL_EUA_1Y = "https://www.ice.com/marketdata/DelayedMarkets.shtml?getHistoricalChartDataAsJson=&marketId=5474739&historicalSpan=2"
-URL_TTF_1Y = "https://www.ice.com/marketdata/DelayedMarkets.shtml?getHistoricalChartDataAsJson=&marketId=6089679&historicalSpan=2"
+# ======================================================
+# 2) URLs ICE
+# ======================================================
+# EUA
+URL_EUA_INTRADAY = "https://www.ice.com/marketdata/DelayedMarkets.shtml?getIntradayChartDataAsJson=&marketId=5474739"
+URL_EUA_3M       = "https://www.ice.com/marketdata/DelayedMarkets.shtml?getHistoricalChartDataAsJson=&marketId=5474739&historicalSpan=1"
+URL_EUA_1Y       = "https://www.ice.com/marketdata/DelayedMarkets.shtml?getHistoricalChartDataAsJson=&marketId=5474739&historicalSpan=2"
+
+# TTF
+URL_TTF_INTRADAY = "https://www.ice.com/marketdata/DelayedMarkets.shtml?getIntradayChartDataAsJson=&marketId=6089679"
+URL_TTF_3M       = "https://www.ice.com/marketdata/DelayedMarkets.shtml?getHistoricalChartDataAsJson=&marketId=6089679&historicalSpan=1"
+URL_TTF_1Y       = "https://www.ice.com/marketdata/DelayedMarkets.shtml?getHistoricalChartDataAsJson=&marketId=6089679&historicalSpan=2"
+
+# POWER
+URL_PWR_INTRADAY = "https://www.ice.com/marketdata/DelayedMarkets.shtml?getIntradayChartDataAsJson=&marketId=6794013"
+URL_PWR_3M       = "https://www.ice.com/marketdata/DelayedMarkets.shtml?getHistoricalChartDataAsJson=&marketId=6794013&historicalSpan=1"
+URL_PWR_1Y       = "https://www.ice.com/marketdata/DelayedMarkets.shtml?getHistoricalChartDataAsJson=&marketId=6794013&historicalSpan=2"
 
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 
 # ======================================================
-# 2) Fetch functions
+# 3) Fetch functions
 # ======================================================
-def fetch_intraday(url):
+def fetch_intraday(url: str) -> pd.DataFrame:
     data = requests.get(url, headers=HEADERS).json()
     df = pd.DataFrame(data["bars"], columns=["time_str", "price"])
     df["time"] = pd.to_datetime(df["time_str"])
     return df.set_index("time").drop(columns=["time_str"])
 
 
-def fetch_hist(url):
+def fetch_hist(url: str) -> pd.DataFrame:
     data = requests.get(url, headers=HEADERS).json()
     df = pd.DataFrame(data["bars"], columns=["time_str", "price"])
     df["time"] = pd.to_datetime(df["time_str"])
@@ -45,7 +58,7 @@ def fetch_hist(url):
 
 
 # ======================================================
-# 3) Matplotlib → Base64
+# 4) Matplotlib → Base64
 # ======================================================
 def fig_to_base64(fig):
     buf = io.BytesIO()
@@ -55,33 +68,34 @@ def fig_to_base64(fig):
 
 
 # ======================================================
-# 4) Dashboard Layout
+# 5) Dashboard Layout
 # ======================================================
 app = Dash(__name__)
 app.title = "ICE Dashboard (Matplotlib)"
 
 app.layout = html.Div([
 
-    html.H1("Dashboard Live EUA & TTF",
+    html.H1("Dashboard Live EUA, TTF & Power (CSS)",
             style={"textAlign": "center"}),
 
-    # Sélecteur Intraday / 3 mois / 1 an
+    # Sélecteur de vue
     html.Div([
         html.Label("Vue données :"),
         dcc.RadioItems(
             id="mode-select",
             options=[
                 {"label": "Intraday", "value": "intraday"},
-                {"label": "3 mois", "value": "3m"},
-                {"label": "1 an", "value": "1y"},
+                {"label": "3 mois",    "value": "3m"},
+                {"label": "1 an",      "value": "1y"},
             ],
             value="intraday",
             inline=True,
             style={"fontSize": "20px", "marginBottom": "20px"}
         )
-    ], style={"textAlign": "center", "marginBottom": "30px"}),
+    ], style={"textAlign": "center", "marginBottom": "20px"}),
 
-    html.Div(id="live-prices", style={"fontSize": "24px", "textAlign": "center"}),
+    # Bloc prix + CSS
+    html.Div(id="live-prices", style={"fontSize": "20px", "textAlign": "center", "marginBottom": "20px"}),
 
     html.H2("EUA Price", style={"textAlign": "center"}),
     html.Div(id="graph-eua"),
@@ -92,21 +106,25 @@ app.layout = html.Div([
     html.H2("Spread EUA – TTF", style={"textAlign": "center"}),
     html.Div(id="graph-spread"),
 
+    html.H2("Power Price", style={"textAlign": "center"}),
+    html.Div(id="graph-power"),
+
+
     html.Pre(id="stats", style={"fontSize": "18px", "textAlign": "center"}),
 
-    # Auto-refresh every 15 seconds
     dcc.Interval(id="interval-refresh", interval=15000, n_intervals=0)
 ])
 
 
 # ======================================================
-# 5) Callback : Auto Update
+# 6) Callback : Auto Update
 # ======================================================
 @app.callback(
     [Output("live-prices", "children"),
      Output("graph-eua", "children"),
      Output("graph-ttf", "children"),
      Output("graph-spread", "children"),
+     Output("graph-power", "children"),
      Output("stats", "children")],
     [Input("interval-refresh", "n_intervals"),
      Input("mode-select", "value")]
@@ -117,31 +135,55 @@ def update_dashboard(_, mode):
     # Sélection du jeu de données
     # ------------------------------
     if mode == "intraday":
-        df_eua = fetch_intraday(URL_EUA)
-        df_ttf = fetch_intraday(URL_TTF)
+        df_eua = fetch_intraday(URL_EUA_INTRADAY)
+        df_ttf = fetch_intraday(URL_TTF_INTRADAY)
+        df_pwr = fetch_intraday(URL_PWR_INTRADAY)
+        vol_factor = np.sqrt(1440)   # approx intraday (min)
     elif mode == "3m":
         df_eua = fetch_hist(URL_EUA_3M)
         df_ttf = fetch_hist(URL_TTF_3M)
+        df_pwr = fetch_hist(URL_PWR_3M)
+        vol_factor = np.sqrt(252)    # daily -> annualisée
     else:  # "1y"
         df_eua = fetch_hist(URL_EUA_1Y)
         df_ttf = fetch_hist(URL_TTF_1Y)
+        df_pwr = fetch_hist(URL_PWR_1Y)
+        vol_factor = np.sqrt(252)
 
-    # Join datasets
-    df = df_eua.rename(columns={"price": "EUA"}).join(
-        df_ttf.rename(columns={"price": "TTF"}),
-        how="inner"
+    # Join des trois séries, alignement + ffill
+    df = (
+        df_eua.rename(columns={"price": "EUA"})
+        .join(df_ttf.rename(columns={"price": "TTF"}), how="outer")
+        .join(df_pwr.rename(columns={"price": "PWR"}), how="outer")
+        .sort_index()
+        .ffill()
     )
 
+    # On s'assure d'avoir les trois colonnes
+    df = df.dropna(subset=["EUA", "TTF", "PWR"])
+
     # ======================
-    # QUANT ANALYSIS
+    # CSS CALC
+    # ======================
+    df["CSS"] = df["PWR"] - df["TTF"] / EFFICIENCY - df["EUA"] * EMISSION_FACTOR
+
+    css_last = df["CSS"].iloc[-1]
+    css_first = df["CSS"].iloc[0]
+    if css_first != 0:
+        css_chg_pct = (css_last / css_first - 1.0) * 100.0
+    else:
+        css_chg_pct = np.nan
+
+    # ======================
+    # QUANT ANALYSIS EUA / TTF
     # ======================
     correlation = df["EUA"].corr(df["TTF"])
 
     df["ret_eua"] = np.log(df["EUA"] / df["EUA"].shift(1))
     df["ret_ttf"] = np.log(df["TTF"] / df["TTF"].shift(1))
 
-    vol_eua = df["ret_eua"].std() * np.sqrt(1440)
-    vol_ttf = df["ret_ttf"].std() * np.sqrt(1440)
+    vol_eua = df["ret_eua"].std() * vol_factor
+    vol_ttf = df["ret_ttf"].std() * vol_factor
 
     df["spread"] = df["EUA"] - df["TTF"]
     mean_spread = df["spread"].mean()
@@ -153,7 +195,7 @@ def update_dashboard(_, mode):
     # ======================
 
     # --- EUA ---
-    fig1 = plt.figure(figsize=(15,4))
+    fig1 = plt.figure(figsize=(15, 4))
     plt.plot(df.index, df["EUA"])
     plt.axhline(mean_eua, color="red", linestyle="--")
     plt.title(f"Evolution du prix EUA ({mode})")
@@ -162,7 +204,7 @@ def update_dashboard(_, mode):
     plt.close(fig1)
 
     # --- TTF ---
-    fig2 = plt.figure(figsize=(15,4))
+    fig2 = plt.figure(figsize=(15, 4))
     plt.plot(df.index, df["TTF"], color="orange")
     plt.axhline(mean_ttf, color="red", linestyle="--")
     plt.title(f"Evolution du prix TTF Jan26 ({mode})")
@@ -170,46 +212,69 @@ def update_dashboard(_, mode):
     ttf_img = "data:image/png;base64," + fig_to_base64(fig2)
     plt.close(fig2)
 
-    # --- SPREAD ---
-    fig3 = plt.figure(figsize=(15,4))
+    # --- SPREAD EUA-TTF ---
+    fig3 = plt.figure(figsize=(15, 4))
     plt.plot(df.index, df["spread"], color="black")
     plt.axhline(mean_spread, color="red", linestyle="--")
     plt.title(f"Spread EUA – TTF ({mode})")
     plt.grid(True)
+    spread_img = "data:image/png;base64()" + fig_to_base64(fig3)
     spread_img = "data:image/png;base64," + fig_to_base64(fig3)
     plt.close(fig3)
 
     # ======================
     # DISPLAY TOP PRICES
     # ======================
+    mode_label = {"intraday": "Intraday", "3m": "3 mois", "1y": "1 an"}[mode]
+
     prices_display = [
+        html.Div(f"Mode : {mode_label}"),
         html.Div(f"EUA : {df['EUA'].iloc[-1]:.2f} €"),
-        html.Div(f"TTF Jan26 : {df['TTF'].iloc[-1]:.3f} €"),
-        html.Div(f"⏱ Last update : {datetime.now().strftime('%H:%M:%S')}"),
-        html.Div(f"Mode : {mode}")
+        html.Div(f"TTF : {df['TTF'].iloc[-1]:.3f} €"),
+        html.Div(f"Power : {df['PWR'].iloc[-1]:.2f} €"),
+        html.Br(),
+        html.Div(f"CSS : {css_last:.2f} €/MWh"),
+        html.Div(f"CSS %chg ({mode_label}) : {css_chg_pct:+.2f} %"),
+        html.Br(),
+        html.Div(f"⏱ Last update : {datetime.now().strftime('%H:%M:%S')}")
     ]
 
     # ======================
     # TEXT STATS
     # ======================
     stats_text = (
-        f"\nCorrélation EUA–TTF : {correlation:.4f}"
-        f"\nVol EUA : {vol_eua:.4f}"
-        f"\nVol TTF : {vol_ttf:.4f}"
-        f"\nSpread moyen : {mean_spread:.4f}"
+        f"\n📌 Corrélation EUA–TTF : {correlation:.4f}"
+        f"\n📌 Volatilité EUA (annualisée approx) : {vol_eua:.4f}"
+        f"\n📌 Volatilité TTF (annualisée approx) : {vol_ttf:.4f}"
+        f"\n📌 Spread moyen EUA–TTF : {mean_spread:.4f}"
+        f"\n📌 CSS actuel : {css_last:.2f} €/MWh"
+        f"\n📌 Variation CSS {mode_label} : {css_chg_pct:+.2f} %"
     )
+
+        # --- POWER ---
+    fig4 = plt.figure(figsize=(15,4))
+    plt.plot(df.index, df["PWR"], color="purple", label="Power Price")
+    plt.title(f"Prix Power ({mode})")
+    plt.xlabel("Date/Heure")
+    plt.ylabel("€/MWh")
+    plt.grid(True)
+    plt.legend()
+    power_img = "data:image/png;base64," + fig_to_base64(fig4)
+    plt.close(fig4)
+
 
     return (
         prices_display,
         html.Img(src=eua_img, style={"width": "100%"}),
         html.Img(src=ttf_img, style={"width": "100%"}),
         html.Img(src=spread_img, style={"width": "100%"}),
+        html.Img(src=power_img, style={"width": "100%"}),
         stats_text
     )
 
 
 # ======================================================
-# 6) RUN SERVER
+# 7) RUN SERVER
 # ======================================================
 if __name__ == "__main__":
     app.run(debug=True)
