@@ -1,0 +1,215 @@
+import requests
+import pandas as pd
+import numpy as np
+import io
+import base64
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from datetime import datetime
+
+from dash import Dash, html, dcc
+from dash.dependencies import Input, Output
+
+
+# ======================================================
+# 1) URLs ICE
+# ======================================================
+URL_EUA = "https://www.ice.com/marketdata/DelayedMarkets.shtml?getIntradayChartDataAsJson=&marketId=5474739"
+URL_TTF = "https://www.ice.com/marketdata/DelayedMarkets.shtml?getIntradayChartDataAsJson=&marketId=6089679"
+
+URL_EUA_3M = "https://www.ice.com/marketdata/DelayedMarkets.shtml?getHistoricalChartDataAsJson=&marketId=5474739&historicalSpan=1"
+URL_TTF_3M = "https://www.ice.com/marketdata/DelayedMarkets.shtml?getHistoricalChartDataAsJson=&marketId=6089679&historicalSpan=1"
+
+URL_EUA_1Y = "https://www.ice.com/marketdata/DelayedMarkets.shtml?getHistoricalChartDataAsJson=&marketId=5474739&historicalSpan=2"
+URL_TTF_1Y = "https://www.ice.com/marketdata/DelayedMarkets.shtml?getHistoricalChartDataAsJson=&marketId=6089679&historicalSpan=2"
+
+HEADERS = {"User-Agent": "Mozilla/5.0"}
+
+
+# ======================================================
+# 2) Fetch functions
+# ======================================================
+def fetch_intraday(url):
+    data = requests.get(url, headers=HEADERS).json()
+    df = pd.DataFrame(data["bars"], columns=["time_str", "price"])
+    df["time"] = pd.to_datetime(df["time_str"])
+    return df.set_index("time").drop(columns=["time_str"])
+
+
+def fetch_hist(url):
+    data = requests.get(url, headers=HEADERS).json()
+    df = pd.DataFrame(data["bars"], columns=["time_str", "price"])
+    df["time"] = pd.to_datetime(df["time_str"])
+    return df.set_index("time").drop(columns=["time_str"])
+
+
+# ======================================================
+# 3) Matplotlib → Base64
+# ======================================================
+def fig_to_base64(fig):
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode()
+
+
+# ======================================================
+# 4) Dashboard Layout
+# ======================================================
+app = Dash(__name__)
+app.title = "ICE Dashboard (Matplotlib)"
+
+app.layout = html.Div([
+
+    html.H1("Dashboard Live EUA & TTF",
+            style={"textAlign": "center"}),
+
+    # Sélecteur Intraday / 3 mois / 1 an
+    html.Div([
+        html.Label("Vue données :"),
+        dcc.RadioItems(
+            id="mode-select",
+            options=[
+                {"label": "Intraday", "value": "intraday"},
+                {"label": "3 mois", "value": "3m"},
+                {"label": "1 an", "value": "1y"},
+            ],
+            value="intraday",
+            inline=True,
+            style={"fontSize": "20px", "marginBottom": "20px"}
+        )
+    ], style={"textAlign": "center", "marginBottom": "30px"}),
+
+    html.Div(id="live-prices", style={"fontSize": "24px", "textAlign": "center"}),
+
+    html.H2("EUA Price", style={"textAlign": "center"}),
+    html.Div(id="graph-eua"),
+
+    html.H2("TTF Jan26 Price", style={"textAlign": "center"}),
+    html.Div(id="graph-ttf"),
+
+    html.H2("Spread EUA – TTF", style={"textAlign": "center"}),
+    html.Div(id="graph-spread"),
+
+    html.Pre(id="stats", style={"fontSize": "18px", "textAlign": "center"}),
+
+    # Auto-refresh every 15 seconds
+    dcc.Interval(id="interval-refresh", interval=15000, n_intervals=0)
+])
+
+
+# ======================================================
+# 5) Callback : Auto Update
+# ======================================================
+@app.callback(
+    [Output("live-prices", "children"),
+     Output("graph-eua", "children"),
+     Output("graph-ttf", "children"),
+     Output("graph-spread", "children"),
+     Output("stats", "children")],
+    [Input("interval-refresh", "n_intervals"),
+     Input("mode-select", "value")]
+)
+def update_dashboard(_, mode):
+
+    # ------------------------------
+    # Sélection du jeu de données
+    # ------------------------------
+    if mode == "intraday":
+        df_eua = fetch_intraday(URL_EUA)
+        df_ttf = fetch_intraday(URL_TTF)
+    elif mode == "3m":
+        df_eua = fetch_hist(URL_EUA_3M)
+        df_ttf = fetch_hist(URL_TTF_3M)
+    else:  # "1y"
+        df_eua = fetch_hist(URL_EUA_1Y)
+        df_ttf = fetch_hist(URL_TTF_1Y)
+
+    # Join datasets
+    df = df_eua.rename(columns={"price": "EUA"}).join(
+        df_ttf.rename(columns={"price": "TTF"}),
+        how="inner"
+    )
+
+    # ======================
+    # QUANT ANALYSIS
+    # ======================
+    correlation = df["EUA"].corr(df["TTF"])
+
+    df["ret_eua"] = np.log(df["EUA"] / df["EUA"].shift(1))
+    df["ret_ttf"] = np.log(df["TTF"] / df["TTF"].shift(1))
+
+    vol_eua = df["ret_eua"].std() * np.sqrt(1440)
+    vol_ttf = df["ret_ttf"].std() * np.sqrt(1440)
+
+    df["spread"] = df["EUA"] - df["TTF"]
+    mean_spread = df["spread"].mean()
+    mean_eua = df["EUA"].mean()
+    mean_ttf = df["TTF"].mean()
+
+    # ======================
+    #  MATPLOTLIB GRAPHS
+    # ======================
+
+    # --- EUA ---
+    fig1 = plt.figure(figsize=(15,4))
+    plt.plot(df.index, df["EUA"])
+    plt.axhline(mean_eua, color="red", linestyle="--")
+    plt.title(f"Evolution du prix EUA ({mode})")
+    plt.grid(True)
+    eua_img = "data:image/png;base64," + fig_to_base64(fig1)
+    plt.close(fig1)
+
+    # --- TTF ---
+    fig2 = plt.figure(figsize=(15,4))
+    plt.plot(df.index, df["TTF"], color="orange")
+    plt.axhline(mean_ttf, color="red", linestyle="--")
+    plt.title(f"Evolution du prix TTF Jan26 ({mode})")
+    plt.grid(True)
+    ttf_img = "data:image/png;base64," + fig_to_base64(fig2)
+    plt.close(fig2)
+
+    # --- SPREAD ---
+    fig3 = plt.figure(figsize=(15,4))
+    plt.plot(df.index, df["spread"], color="black")
+    plt.axhline(mean_spread, color="red", linestyle="--")
+    plt.title(f"Spread EUA – TTF ({mode})")
+    plt.grid(True)
+    spread_img = "data:image/png;base64," + fig_to_base64(fig3)
+    plt.close(fig3)
+
+    # ======================
+    # DISPLAY TOP PRICES
+    # ======================
+    prices_display = [
+        html.Div(f"EUA : {df['EUA'].iloc[-1]:.2f} €"),
+        html.Div(f"TTF Jan26 : {df['TTF'].iloc[-1]:.3f} €"),
+        html.Div(f"⏱ Last update : {datetime.now().strftime('%H:%M:%S')}"),
+        html.Div(f"Mode : {mode}")
+    ]
+
+    # ======================
+    # TEXT STATS
+    # ======================
+    stats_text = (
+        f"\nCorrélation EUA–TTF : {correlation:.4f}"
+        f"\nVol EUA : {vol_eua:.4f}"
+        f"\nVol TTF : {vol_ttf:.4f}"
+        f"\nSpread moyen : {mean_spread:.4f}"
+    )
+
+    return (
+        prices_display,
+        html.Img(src=eua_img, style={"width": "100%"}),
+        html.Img(src=ttf_img, style={"width": "100%"}),
+        html.Img(src=spread_img, style={"width": "100%"}),
+        stats_text
+    )
+
+
+# ======================================================
+# 6) RUN SERVER
+# ======================================================
+if __name__ == "__main__":
+    app.run(debug=True)
